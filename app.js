@@ -22,6 +22,8 @@ const els = {
   adminEntry: $('adminEntry'), adminPin: $('adminPin'), loginBtn: $('loginBtn'), backToVoteBtn: $('backToVoteBtn'),
   goVoteBtn: $('goVoteBtn'), logoutBtn: $('logoutBtn'), ceremonyBtn: $('ceremonyBtn'),
   newAwardName: $('newAwardName'), newQuestion: $('newQuestion'), addQuestionBtn: $('addQuestionBtn'), questionList: $('questionList'),
+  memberSuggestions: $('memberSuggestions'), memberBulkInput: $('memberBulkInput'), saveMembersBtn: $('saveMembersBtn'),
+  memberPreviewList: $('memberPreviewList'), memberCountBadge: $('memberCountBadge'), memberCountText: $('memberCountText'),
   resultsList: $('resultsList'), toast: $('toast'), closedNotice: $('closedNotice'), voteContent: $('voteContent'),
   voteCountBadge: $('voteCountBadge'), toggleVotingBtn: $('toggleVotingBtn'), toggleRepeatBtn: $('toggleRepeatBtn'),
   resetVotesBtn: $('resetVotesBtn'), resetAllBtn: $('resetAllBtn'),
@@ -33,8 +35,10 @@ const els = {
 };
 
 let publicQuestions = [];
+let publicMembers = [];
 let settings = { voting_open: true, allow_repeat_nominee: true };
 let adminQuestions = [];
+let adminMembers = [];
 let adminSubmissions = [];
 let adminAnswers = [];
 let ceremonyIndex = 0;
@@ -73,24 +77,43 @@ function requireConfigured() {
   showToast('Supabase 연결이 아직 안 되어 있어요. config.js를 확인해주세요.');
   return false;
 }
+function memberMapFrom(list) {
+  const map = new Map();
+  list.forEach(member => map.set(normalizeName(member.name), member.name));
+  return map;
+}
+function canonicalMemberName(input, list) {
+  return memberMapFrom(list).get(normalizeName(input)) || '';
+}
+function updateMemberSuggestions() {
+  const allNames = [...new Set([...publicMembers, ...adminMembers].map(m => m.name))];
+  els.memberSuggestions.innerHTML = allNames
+    .map(name => `<option value="${escapeHtml(name)}"></option>`)
+    .join('');
+  els.voterName.setAttribute('list', 'memberSuggestions');
+}
 
 async function loadPublicData() {
   if (!requireConfigured()) {
     publicQuestions = [];
+    publicMembers = [];
     renderVote();
     return false;
   }
-  const [settingsRes, questionsRes] = await Promise.all([
+  const [settingsRes, questionsRes, membersRes] = await Promise.all([
     sb.from('awards_settings').select('voting_open,allow_repeat_nominee').eq('id', 1).single(),
-    sb.from('awards_questions').select('id,award_name,title,sort_order,is_active').eq('is_active', true).order('sort_order', { ascending: true })
+    sb.from('awards_questions').select('id,award_name,title,sort_order,is_active').eq('is_active', true).order('sort_order', { ascending: true }),
+    sb.from('awards_members').select('id,name,sort_order,is_active').eq('is_active', true).order('sort_order', { ascending: true }).order('name', { ascending: true })
   ]);
-  if (settingsRes.error || questionsRes.error) {
-    console.error(settingsRes.error || questionsRes.error);
+  if (settingsRes.error || questionsRes.error || membersRes.error) {
+    console.error(settingsRes.error || questionsRes.error || membersRes.error);
     showToast('투표 정보를 불러오지 못했어요.');
     return false;
   }
   settings = settingsRes.data || settings;
   publicQuestions = questionsRes.data || [];
+  publicMembers = membersRes.data || [];
+  updateMemberSuggestions();
   renderVote();
   return true;
 }
@@ -103,8 +126,16 @@ function renderVote() {
 
   if (!publicQuestions.length) {
     els.voteForm.innerHTML = '<div class="card empty">등록된 질문이 아직 없어요.</div>';
+    els.submitBtn.disabled = true;
     return;
   }
+  if (!publicMembers.length) {
+    els.voteForm.innerHTML = '<div class="card empty">등록된 회원 명단이 아직 없어요. 관리자 페이지에서 회원 명단을 먼저 저장해주세요.</div>';
+    els.submitBtn.disabled = true;
+    return;
+  }
+
+  els.submitBtn.disabled = false;
   publicQuestions.forEach((q, i) => {
     const block = document.createElement('section');
     block.className = 'card question-card';
@@ -114,7 +145,7 @@ function renderVote() {
         <div class="award-chip">${escapeHtml(q.award_name)}</div>
       </div>
       <h3>${escapeHtml(q.title)}</h3>
-      <input class="input answer-input" data-question-id="${q.id}" type="text" maxlength="30" placeholder="이름을 입력하세요" autocomplete="off" />`;
+      <input class="input answer-input" data-question-id="${q.id}" type="text" list="memberSuggestions" maxlength="30" placeholder="이름을 입력하세요. (예: 홍길동 / 성을 포함한 전체 이름)" autocomplete="off" spellcheck="false" />`;
     els.voteForm.appendChild(block);
   });
 }
@@ -122,15 +153,25 @@ function renderVote() {
 async function submitVote() {
   if (!requireConfigured()) return;
   if (!settings.voting_open) return showToast('현재 투표가 마감되어 있어요.');
-  const voter = els.voterName.value.trim();
-  if (!voter) return showToast('먼저 내 이름을 입력해주세요.');
+  if (!publicMembers.length) return showToast('등록된 회원 명단이 없어요. 관리자에게 먼저 등록을 요청해주세요.');
+
+  const voterInput = els.voterName.value.trim();
+  if (!voterInput) return showToast('먼저 내 이름을 입력해주세요.');
+  const voter = canonicalMemberName(voterInput, publicMembers);
+  if (!voter) return showToast('내 이름은 등록된 회원 이름으로 정확히 입력해주세요.');
+
   const inputs = [...document.querySelectorAll('.answer-input')];
   if (!inputs.length) return showToast('등록된 질문이 없어요.');
-  const answers = inputs.map(input => ({
-    question_id: input.dataset.questionId,
-    answer_name: input.value.trim()
-  }));
-  if (answers.some(a => !a.answer_name)) return showToast('모든 질문에 이름을 입력해주세요.');
+
+  const answers = [];
+  for (const input of inputs) {
+    const raw = input.value.trim();
+    if (!raw) return showToast('모든 질문에 이름을 입력해주세요.');
+    const canonical = canonicalMemberName(raw, publicMembers);
+    if (!canonical) return showToast('후보 이름은 등록된 회원 이름으로만 입력할 수 있어요.');
+    answers.push({ question_id: input.dataset.questionId, answer_name: canonical });
+  }
+
   if (!settings.allow_repeat_nominee) {
     const names = answers.map(a => normalizeName(a.answer_name));
     if (new Set(names).size !== names.length) return showToast('이번 투표는 같은 사람에게 여러 상을 줄 수 없어요.');
@@ -145,6 +186,7 @@ async function submitVote() {
     if (m.includes('DUPLICATE_VOTER')) return showToast('이미 투표한 이름이에요.');
     if (m.includes('VOTING_CLOSED')) { await loadPublicData(); return showToast('투표가 마감되었어요.'); }
     if (m.includes('REPEAT_NOMINEE_NOT_ALLOWED')) return showToast('같은 사람에게 여러 상을 줄 수 없어요.');
+    if (m.includes('INVALID_VOTER_NAME') || m.includes('INVALID_ANSWER_NAME') || m.includes('UNKNOWN_MEMBER')) return showToast('등록된 회원 이름만 사용할 수 있어요.');
     if (m.includes('ANSWER_COUNT_MISMATCH') || m.includes('INVALID_QUESTION')) { await loadPublicData(); return showToast('질문이 변경됐어요. 다시 확인해서 제출해주세요.'); }
     return showToast('제출 중 오류가 발생했어요.');
   }
@@ -190,13 +232,14 @@ async function login() {
 
 async function loadAdminData() {
   if (!requireConfigured()) return false;
-  const [qRes, sRes, subRes, aRes] = await Promise.all([
+  const [qRes, sRes, memberRes, subRes, aRes] = await Promise.all([
     sb.from('awards_questions').select('*').order('sort_order', { ascending: true }),
     sb.from('awards_settings').select('voting_open,allow_repeat_nominee').eq('id', 1).single(),
+    sb.from('awards_members').select('*').order('sort_order', { ascending: true }).order('name', { ascending: true }),
     sb.from('awards_submissions').select('id,voter_name,created_at').order('created_at', { ascending: true }),
     sb.from('awards_answers').select('submission_id,question_id,answer_name,created_at')
   ]);
-  const err = qRes.error || sRes.error || subRes.error || aRes.error;
+  const err = qRes.error || sRes.error || memberRes.error || subRes.error || aRes.error;
   if (err) {
     console.error(err);
     showToast('관리자 데이터를 불러오지 못했어요.');
@@ -204,19 +247,25 @@ async function loadAdminData() {
   }
   adminQuestions = qRes.data || [];
   settings = sRes.data || settings;
+  adminMembers = memberRes.data || [];
   adminSubmissions = subRes.data || [];
   adminAnswers = aRes.data || [];
+  updateMemberSuggestions();
   renderAdmin();
   return true;
 }
 
 function renderAdmin() {
   els.voteCountBadge.textContent = adminSubmissions.length;
+  els.memberCountBadge.textContent = adminMembers.length;
+  els.memberCountText.textContent = `${adminMembers.length}명`;
+  if (els.memberBulkInput) els.memberBulkInput.value = adminMembers.map(m => m.name).join('\n');
   els.toggleVotingBtn.textContent = settings.voting_open ? '투표 마감하기' : '투표 다시 열기';
   els.toggleVotingBtn.className = settings.voting_open ? 'danger small' : 'primary small';
   els.toggleRepeatBtn.textContent = settings.allow_repeat_nominee ? '현재: 허용' : '현재: 금지';
   els.toggleRepeatBtn.className = settings.allow_repeat_nominee ? 'ghost small' : 'primary small';
   renderQuestionList();
+  renderMemberPreview();
   renderResults();
 }
 
@@ -271,6 +320,56 @@ function renderQuestionList() {
     row.querySelector('[data-action="down"]').onclick = () => moveQuestion(q.id, 1);
     els.questionList.appendChild(row);
   });
+}
+
+function renderMemberPreview() {
+  els.memberPreviewList.innerHTML = '';
+  if (!adminMembers.length) {
+    els.memberPreviewList.innerHTML = '<div class="member-empty">아직 등록된 회원이 없어요.</div>';
+    return;
+  }
+  adminMembers.forEach(member => {
+    const chip = document.createElement('span');
+    chip.className = 'member-chip';
+    chip.textContent = member.name;
+    els.memberPreviewList.appendChild(chip);
+  });
+}
+
+async function saveMembers() {
+  const raw = els.memberBulkInput.value || '';
+  const pieces = raw.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+  const unique = [];
+  const seen = new Set();
+
+  for (const name of pieces) {
+    const normalized = normalizeName(name);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(name.replace(/\s+/g, ''));
+  }
+
+  if (!unique.length) return showToast('회원 이름을 한 명 이상 입력해주세요.');
+  if (!confirm(`회원 명단을 ${unique.length}명으로 저장할까요? 기존 명단은 새 명단으로 교체됩니다.`)) return;
+
+  setBusy(els.saveMembersBtn, true, '저장 중...', '명단 저장');
+  const delRes = await sb.from('awards_members').delete().gte('id', 0);
+  if (delRes.error) {
+    console.error(delRes.error);
+    setBusy(els.saveMembersBtn, false, '저장 중...', '명단 저장');
+    return showToast('기존 명단을 지우지 못했어요.');
+  }
+
+  const rows = unique.map((name, index) => ({ name, sort_order: index + 1, is_active: true }));
+  const insRes = await sb.from('awards_members').insert(rows);
+  setBusy(els.saveMembersBtn, false, '저장 중...', '명단 저장');
+  if (insRes.error) {
+    console.error(insRes.error);
+    return showToast('회원 명단을 저장하지 못했어요.');
+  }
+  await loadAdminData();
+  showToast(`회원 명단 ${unique.length}명을 저장했어요.`);
 }
 
 async function moveQuestion(id, dir) {
@@ -360,7 +459,7 @@ async function resetVotes() {
 }
 
 async function resetAll() {
-  if (!confirm('질문, 설정, 투표를 모두 기본 상태로 되돌릴까요? 이 작업은 되돌릴 수 없어요.')) return;
+  if (!confirm('질문, 설정, 투표를 모두 기본 상태로 되돌릴까요? 회원 명단은 유지됩니다. 이 작업은 되돌릴 수 없어요.')) return;
   const subDel = await sb.from('awards_submissions').delete().gte('created_at', '1970-01-01T00:00:00Z');
   if (subDel.error) { console.error(subDel.error); return showToast('초기화 중 오류가 발생했어요.'); }
   const qDel = await sb.from('awards_questions').delete().gte('created_at', '1970-01-01T00:00:00Z');
@@ -370,7 +469,7 @@ async function resetAll() {
   const sUpd = await sb.from('awards_settings').update({ voting_open: true, allow_repeat_nominee: true, updated_at: new Date().toISOString() }).eq('id', 1);
   if (sUpd.error) { console.error(sUpd.error); return showToast('설정 초기화에 실패했어요.'); }
   await loadAdminData();
-  showToast('전체 데이터를 기본 상태로 초기화했어요.');
+  showToast('질문, 설정, 투표를 기본 상태로 초기화했어요.');
 }
 
 function renderCeremony() {
@@ -475,6 +574,7 @@ els.logoutBtn.onclick = async () => { if (sb) await sb.auth.signOut(); goTo('');
 els.addQuestionBtn.onclick = addQuestion;
 els.newQuestion.addEventListener('keydown', e => { if (e.key === 'Enter') addQuestion(); });
 els.newAwardName.addEventListener('keydown', e => { if (e.key === 'Enter') els.newQuestion.focus(); });
+els.saveMembersBtn.onclick = saveMembers;
 els.toggleVotingBtn.onclick = () => updateSetting('voting_open', !settings.voting_open, settings.voting_open ? '투표를 마감했어요.' : '투표를 다시 열었어요.');
 els.toggleRepeatBtn.onclick = () => updateSetting('allow_repeat_nominee', !settings.allow_repeat_nominee, settings.allow_repeat_nominee ? '한 사람 몰아주기를 금지했어요.' : '한 사람 몰아주기를 허용했어요.');
 els.resetVotesBtn.onclick = resetVotes;
