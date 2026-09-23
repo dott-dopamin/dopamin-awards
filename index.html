@@ -24,12 +24,7 @@
       <div id="voteContent">
         <section class="card voter-card">
           <label for="voterName">내 이름</label>
-          <input id="voterName" class="input" type="text" list="memberSuggestions" placeholder="예: 홍길동" maxlength="30" autocomplete="off" />
-          <p class="hint">
-            동일한 이름으로는 <strong>1회만 제출</strong>할 수 있습니다.<br>
-            본인 확인이 어렵거나 불분명한 이름으로 투표할 경우 <strong>무효표 처리</strong>됩니다.<br>
-            장난성 이름 및 장난 투표는 금지합니다.
-          </p>
+          <div class="autocomplete-wrap"><input id="voterName" class="input" type="text" placeholder="예: 홍길동" maxlength="30" autocomplete="off" /><div class="autocomplete-menu hidden" data-for="voterName"></div></div>
           <p class="sub-hint">등록된 회원 이름만 입력할 수 있어요. 이름을 입력하면 자동으로 검색됩니다.</p>
           <p id="repeatRuleNotice" class="rule-notice hidden">이번 투표는 한 사람에게 여러 상을 몰아줄 수 없어요.</p>
         </section>
@@ -213,7 +208,6 @@
     </section>
   </main>
 
-  <datalist id="memberSuggestions"></datalist>
   <div id="toast" class="toast" aria-live="polite"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>

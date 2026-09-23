@@ -22,7 +22,7 @@ const els = {
   adminEntry: $('adminEntry'), adminPin: $('adminPin'), loginBtn: $('loginBtn'), backToVoteBtn: $('backToVoteBtn'),
   goVoteBtn: $('goVoteBtn'), logoutBtn: $('logoutBtn'), ceremonyBtn: $('ceremonyBtn'),
   newAwardName: $('newAwardName'), newQuestion: $('newQuestion'), addQuestionBtn: $('addQuestionBtn'), questionList: $('questionList'),
-  memberSuggestions: $('memberSuggestions'), memberBulkInput: $('memberBulkInput'), saveMembersBtn: $('saveMembersBtn'),
+  memberBulkInput: $('memberBulkInput'), saveMembersBtn: $('saveMembersBtn'),
   memberPreviewList: $('memberPreviewList'), memberCountBadge: $('memberCountBadge'), memberCountText: $('memberCountText'),
   resultsList: $('resultsList'), toast: $('toast'), closedNotice: $('closedNotice'), voteContent: $('voteContent'),
   voteCountBadge: $('voteCountBadge'), toggleVotingBtn: $('toggleVotingBtn'), toggleRepeatBtn: $('toggleRepeatBtn'),
@@ -85,13 +85,69 @@ function memberMapFrom(list) {
 function canonicalMemberName(input, list) {
   return memberMapFrom(list).get(normalizeName(input)) || '';
 }
-function updateMemberSuggestions() {
-  const allNames = [...new Set([...publicMembers, ...adminMembers].map(m => m.name))];
-  els.memberSuggestions.innerHTML = allNames
-    .map(name => `<option value="${escapeHtml(name)}"></option>`)
-    .join('');
-  els.voterName.setAttribute('list', 'memberSuggestions');
+function closeAutocompleteMenus(except = null) {
+  document.querySelectorAll('.autocomplete-menu').forEach(menu => {
+    if (menu !== except) menu.classList.add('hidden');
+  });
 }
+
+function ensureAutocompleteMenu(input) {
+  const wrap = input.closest('.autocomplete-wrap') || input.parentElement;
+  let menu = wrap.querySelector('.autocomplete-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.className = 'autocomplete-menu hidden';
+    wrap.appendChild(menu);
+  }
+  return menu;
+}
+
+function bindMemberAutocomplete(input) {
+  if (!input || input.dataset.autocompleteBound === '1') return;
+  input.dataset.autocompleteBound = '1';
+  const menu = ensureAutocompleteMenu(input);
+
+  const renderMatches = () => {
+    const q = normalizeName(input.value);
+    if (!q) {
+      menu.innerHTML = '';
+      menu.classList.add('hidden');
+      return;
+    }
+    const matches = publicMembers
+      .filter(member => normalizeName(member.name).includes(q))
+      .slice(0, 6);
+
+    if (!matches.length) {
+      menu.innerHTML = '<div class="autocomplete-empty">일치하는 회원이 없어요.</div>';
+      menu.classList.remove('hidden');
+      return;
+    }
+
+    menu.innerHTML = matches.map(member => `<button type="button" class="autocomplete-option" data-name="${escapeHtml(member.name)}">${escapeHtml(member.name)}</button>`).join('');
+    menu.classList.remove('hidden');
+    menu.querySelectorAll('.autocomplete-option').forEach(btn => {
+      btn.addEventListener('mousedown', e => {
+        e.preventDefault();
+        input.value = btn.dataset.name;
+        menu.classList.add('hidden');
+      });
+    });
+  };
+
+  input.addEventListener('input', renderMatches);
+  input.addEventListener('focus', () => {
+    closeAutocompleteMenus(menu);
+    if (input.value.trim()) renderMatches();
+  });
+  input.addEventListener('blur', () => setTimeout(() => menu.classList.add('hidden'), 120));
+}
+
+function bindAllMemberAutocompletes() {
+  bindMemberAutocomplete(els.voterName);
+  document.querySelectorAll('.answer-input').forEach(bindMemberAutocomplete);
+}
+
 
 async function loadPublicData() {
   if (!requireConfigured()) {
@@ -113,7 +169,6 @@ async function loadPublicData() {
   settings = settingsRes.data || settings;
   publicQuestions = questionsRes.data || [];
   publicMembers = membersRes.data || [];
-  updateMemberSuggestions();
   renderVote();
   return true;
 }
@@ -145,9 +200,10 @@ function renderVote() {
         <div class="award-chip">${escapeHtml(q.award_name)}</div>
       </div>
       <h3>${escapeHtml(q.title)}</h3>
-      <input class="input answer-input" data-question-id="${q.id}" type="text" list="memberSuggestions" maxlength="30" placeholder="이름을 입력하세요. (예: 홍길동 / 성을 포함한 전체 이름)" autocomplete="off" spellcheck="false" />`;
+      <div class="autocomplete-wrap"><input class="input answer-input" data-question-id="${q.id}" type="text" maxlength="30" placeholder="이름을 입력하세요. (예: 홍길동 / 성을 포함한 전체 이름)" autocomplete="off" spellcheck="false" /><div class="autocomplete-menu hidden"></div></div>`;
     els.voteForm.appendChild(block);
   });
+  bindAllMemberAutocompletes();
 }
 
 async function submitVote() {
@@ -250,7 +306,6 @@ async function loadAdminData() {
   adminMembers = memberRes.data || [];
   adminSubmissions = subRes.data || [];
   adminAnswers = aRes.data || [];
-  updateMemberSuggestions();
   renderAdmin();
   return true;
 }
@@ -586,5 +641,6 @@ els.revealWinnerBtn.onclick = () => { ceremonyRevealed = true; renderCeremony();
 els.prevAwardBtn.onclick = () => moveCeremony(-1);
 els.nextAwardBtn.onclick = () => moveCeremony(1);
 document.querySelectorAll('.tab').forEach(btn => btn.onclick = () => switchTab(btn.dataset.tab));
+document.addEventListener('click', e => { if (!e.target.closest('.autocomplete-wrap')) closeAutocompleteMenus(); });
 window.addEventListener('hashchange', route);
 route();
