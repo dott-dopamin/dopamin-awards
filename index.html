@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DOPAMIN AWARDS</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <section id="voteView">
+      <section class="hero card">
+        <button id="adminEntry" class="admin-entry" type="button">🔒 관리자</button>
+        <div class="eyebrow">DOPAMIN NEW YEAR AWARDS</div>
+        <h1>도파민 신년회 어워즈 🎉</h1>
+        <p>각 질문에 가장 먼저 떠오르는 사람의 이름을 적어주세요.<br>투표 결과는 관리자만 확인할 수 있어요.</p>
+      </section>
+
+      <section id="closedNotice" class="card closed-notice hidden">
+        <strong>현재 투표가 마감되어 있어요.</strong>
+        <p>관리자가 투표를 다시 열면 참여할 수 있습니다.</p>
+      </section>
+
+      <div id="voteContent">
+        <section class="card voter-card">
+          <label for="voterName">내 이름</label>
+          <input id="voterName" class="input" type="text" placeholder="예: 제이" maxlength="30" autocomplete="name" />
+          <p class="hint">같은 이름으로는 한 번만 제출할 수 있어요.</p>
+          <p id="repeatRuleNotice" class="rule-notice hidden">이번 투표는 한 사람에게 여러 상을 몰아줄 수 없어요.</p>
+        </section>
+
+        <form id="voteForm" class="questions"></form>
+
+        <div class="sticky-submit">
+          <button id="submitBtn" class="primary" type="button">투표 제출하기</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="adminLoginView" class="hidden">
+      <section class="card auth-card">
+        <div class="eyebrow">ADMIN ONLY</div>
+        <h1>관리자 로그인</h1>
+        <p>관리자 비밀번호 4자리를 입력해주세요.</p>
+        <div class="stack">
+          <input id="adminPin" class="input pin-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="••••" autocomplete="off" />
+          <button id="loginBtn" class="primary" type="button">관리자 로그인</button>
+          <button id="backToVoteBtn" class="text-btn" type="button">← 투표 페이지로 돌아가기</button>
+        </div>
+        
+      </section>
+    </section>
+
+    <section id="adminView" class="hidden admin-wrap-inner">
+      <div class="admin-top">
+        <div>
+          <div class="eyebrow">DOPAMIN AWARDS</div>
+          <h1>관리자 페이지</h1>
+          <p>질문, 투표 설정, 결과 확인을 한 곳에서 관리해요.</p>
+        </div>
+        <div class="top-actions">
+          <button id="ceremonyBtn" class="stage-btn" type="button">🏆 시상식 화면</button>
+          <button id="goVoteBtn" class="ghost" type="button">투표 페이지</button>
+          <button id="logoutBtn" class="ghost" type="button">로그아웃</button>
+        </div>
+      </div>
+
+      <nav class="tabs card">
+        <button class="tab active" data-tab="questionsTab" type="button">질문 관리</button>
+        <button class="tab" data-tab="resultsTab" type="button">투표 결과 <span id="voteCountBadge" class="badge">0</span></button>
+        <button class="tab" data-tab="settingsTab" type="button">설정</button>
+      </nav>
+
+      <section id="questionsTab" class="tab-panel">
+        <div class="card">
+          <div class="section-head">
+            <div>
+              <h2>상 추가</h2>
+              <p>상 이름은 짧고 웃기게, 질문은 투표자가 이해하기 쉽게 적어주세요.</p>
+            </div>
+          </div>
+          <div class="award-add-grid">
+            <input id="newAwardName" class="input" type="text" placeholder="상 이름 · 예: 천사 그 잡채상 😇" maxlength="40" />
+            <input id="newQuestion" class="input" type="text" placeholder="질문 · 예: 가장 친절한 사람은?" maxlength="100" />
+            <button id="addQuestionBtn" class="primary small" type="button">추가</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-head">
+            <div>
+              <h2>현재 시상 항목</h2>
+              <p>상 이름과 질문, 노출 여부, 순서를 수정할 수 있어요.</p>
+            </div>
+          </div>
+          <div id="questionList" class="admin-list"></div>
+        </div>
+      </section>
+
+      <section id="resultsTab" class="tab-panel hidden">
+        <div class="card">
+          <div class="section-head result-head">
+            <div>
+              <h2>투표 결과</h2>
+              <p>득표수와 개별 응답은 관리자에게만 표시됩니다.</p>
+            </div>
+          </div>
+          <div id="resultsList" class="results-list"></div>
+        </div>
+      </section>
+
+      <section id="settingsTab" class="tab-panel hidden">
+        <div class="card settings-list">
+          <div class="setting-row">
+            <div>
+              <h2>투표 상태</h2>
+              <p>마감하면 공개 페이지의 투표 입력란이 숨겨집니다.</p>
+            </div>
+            <button id="toggleVotingBtn" class="primary small" type="button"></button>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <h2>한 사람 몰아주기</h2>
+              <p>금지하면 한 투표자가 같은 사람을 여러 상에 반복 입력할 수 없어요.</p>
+            </div>
+            <button id="toggleRepeatBtn" class="ghost small" type="button"></button>
+          </div>
+
+          <div class="setting-row danger-zone">
+            <div>
+              <h2>투표 내역 전체 삭제</h2>
+              <p>질문은 남기고 지금까지 제출된 투표만 모두 삭제합니다.</p>
+            </div>
+            <button id="resetVotesBtn" class="danger" type="button">투표 초기화</button>
+          </div>
+
+          <div class="setting-row danger-zone">
+            <div>
+              <h2>전체 데이터 초기화</h2>
+              <p>질문, 설정, 투표를 모두 기본 상태로 되돌립니다.</p>
+            </div>
+            <button id="resetAllBtn" class="danger" type="button">전체 초기화</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="ceremonyView" class="hidden ceremony-shell">
+      <div class="ceremony-topbar">
+        <button id="ceremonyBackBtn" class="ceremony-ghost" type="button">← 관리자</button>
+        <div id="ceremonyProgress" class="ceremony-progress">1 / 1</div>
+      </div>
+
+      <div class="ceremony-stage">
+        <div id="ceremonyIntro" class="ceremony-intro">
+          <div class="trophy intro-trophy">🏆</div>
+          <h1 class="ceremony-intro-title">도파민 신년회 어워즈</h1>
+          <button id="startCeremonyBtn" class="reveal-btn ceremony-start-btn" type="button">시상식 시작 ✨</button>
+        </div>
+
+        <div id="ceremonyAwardContent" class="ceremony-award-content hidden">
+          <div class="ceremony-kicker">도파민 신년회 어워즈</div>
+          <div class="trophy">🏆</div>
+          <h1 id="ceremonyAwardName" class="ceremony-award">친절상</h1>
+          <p id="ceremonyQuestion" class="ceremony-question">가장 친절한 사람은?</p>
+
+          <div id="winnerBox" class="winner-box locked">
+            <div class="winner-label">수상자</div>
+            <div id="ceremonyWinner" class="ceremony-winner">?</div>
+            <div id="ceremonyVotes" class="ceremony-votes">결과를 공개해주세요</div>
+          </div>
+
+          <button id="revealWinnerBtn" class="reveal-btn" type="button">✨ 수상자 공개</button>
+        </div>
+      </div>
+
+      <div id="ceremonyNav" class="ceremony-nav hidden">
+        <button id="prevAwardBtn" class="ceremony-nav-btn" type="button">← 이전 상</button>
+        <button id="nextAwardBtn" class="ceremony-nav-btn" type="button">다음 상 →</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

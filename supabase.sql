@@ -1,0 +1,267 @@
+-- DOPAMIN AWARDS · 기존 Supabase 프로젝트에 안전하게 추가하는 버전
+-- 기존 DOTT 테이블은 수정/삭제하지 않습니다.
+-- 새로 만드는 객체는 awards_ 접두사(및 is_awards_admin / submit_awards_vote)만 사용합니다.
+-- Supabase Dashboard > SQL Editor > New query 에서 이 파일 전체를 실행하세요.
+
+create extension if not exists "pgcrypto";
+
+-- 1) 어워즈 전용 테이블 -------------------------------------------------------
+create table if not exists public.awards_questions (
+  id uuid primary key default gen_random_uuid(),
+  award_name text not null,
+  title text not null,
+  sort_order int not null default 1,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.awards_submissions (
+  id uuid primary key default gen_random_uuid(),
+  voter_name text not null,
+  created_at timestamptz not null default now()
+);
+
+-- 공백/대소문자만 달리해 중복 투표하는 것을 방지
+create unique index if not exists awards_submissions_voter_name_normalized_uidx
+on public.awards_submissions ((lower(regexp_replace(trim(voter_name), '[[:space:]]+', '', 'g'))));
+
+create table if not exists public.awards_answers (
+  id uuid primary key default gen_random_uuid(),
+  submission_id uuid not null references public.awards_submissions(id) on delete cascade,
+  question_id uuid not null references public.awards_questions(id) on delete cascade,
+  answer_name text not null,
+  created_at timestamptz not null default now(),
+  unique(submission_id, question_id)
+);
+
+create table if not exists public.awards_admins (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.awards_settings (
+  id int primary key default 1 check (id = 1),
+  voting_open boolean not null default true,
+  allow_repeat_nominee boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.awards_settings (id, voting_open, allow_repeat_nominee)
+values (1, true, true)
+on conflict (id) do nothing;
+
+-- 기본 질문. 이미 질문이 있으면 추가하지 않음.
+insert into public.awards_questions (award_name, title, sort_order, is_active)
+select * from (values
+  ('천사 그 잡채상 😇', '가장 친절한 사람은?', 1, true),
+  ('웃음버튼상 😂', '가장 웃긴 사람은?', 2, true),
+  ('올해의 인간 비타민상 ✨', '올해 가장 기억에 남는 사람은?', 3, true)
+) as v(award_name, title, sort_order, is_active)
+where not exists (select 1 from public.awards_questions);
+
+-- 2) 관리자 확인 함수 ---------------------------------------------------------
+create or replace function public.is_awards_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.awards_admins
+    where user_id = auth.uid()
+  );
+$$;
+
+revoke all on function public.is_awards_admin() from public;
+grant execute on function public.is_awards_admin() to anon, authenticated;
+
+-- 3) RLS --------------------------------------------------------------------
+alter table public.awards_questions enable row level security;
+alter table public.awards_submissions enable row level security;
+alter table public.awards_answers enable row level security;
+alter table public.awards_admins enable row level security;
+alter table public.awards_settings enable row level security;
+
+-- 이 어워즈 테이블에 대해서만 정책을 재생성합니다.
+drop policy if exists "awards public read active questions" on public.awards_questions;
+create policy "awards public read active questions"
+on public.awards_questions for select
+to anon, authenticated
+using (is_active = true or public.is_awards_admin());
+
+drop policy if exists "awards admin manage questions" on public.awards_questions;
+create policy "awards admin manage questions"
+on public.awards_questions for all
+to authenticated
+using (public.is_awards_admin())
+with check (public.is_awards_admin());
+
+drop policy if exists "awards admin read submissions" on public.awards_submissions;
+create policy "awards admin read submissions"
+on public.awards_submissions for select
+to authenticated
+using (public.is_awards_admin());
+
+drop policy if exists "awards admin delete submissions" on public.awards_submissions;
+create policy "awards admin delete submissions"
+on public.awards_submissions for delete
+to authenticated
+using (public.is_awards_admin());
+
+drop policy if exists "awards admin read answers" on public.awards_answers;
+create policy "awards admin read answers"
+on public.awards_answers for select
+to authenticated
+using (public.is_awards_admin());
+
+drop policy if exists "awards admin delete answers" on public.awards_answers;
+create policy "awards admin delete answers"
+on public.awards_answers for delete
+to authenticated
+using (public.is_awards_admin());
+
+drop policy if exists "awards admin read own role" on public.awards_admins;
+create policy "awards admin read own role"
+on public.awards_admins for select
+to authenticated
+using (auth.uid() = user_id);
+
+drop policy if exists "awards public read settings" on public.awards_settings;
+create policy "awards public read settings"
+on public.awards_settings for select
+to anon, authenticated
+using (id = 1);
+
+drop policy if exists "awards admin update settings" on public.awards_settings;
+create policy "awards admin update settings"
+on public.awards_settings for update
+to authenticated
+using (public.is_awards_admin())
+with check (public.is_awards_admin());
+
+-- 4) API 권한 ----------------------------------------------------------------
+-- 기존 DOTT 권한은 건드리지 않고 새 awards_* 테이블 권한만 설정합니다.
+revoke all on table public.awards_questions from anon, authenticated;
+revoke all on table public.awards_submissions from anon, authenticated;
+revoke all on table public.awards_answers from anon, authenticated;
+revoke all on table public.awards_admins from anon, authenticated;
+revoke all on table public.awards_settings from anon, authenticated;
+
+grant select on table public.awards_questions to anon, authenticated;
+grant select on table public.awards_settings to anon, authenticated;
+
+grant insert, update, delete on table public.awards_questions to authenticated;
+grant select, delete on table public.awards_submissions to authenticated;
+grant select, delete on table public.awards_answers to authenticated;
+grant select on table public.awards_admins to authenticated;
+grant update on table public.awards_settings to authenticated;
+
+-- 5) 공개 투표 제출 RPC --------------------------------------------------------
+-- 브라우저가 submissions/answers 테이블에 직접 INSERT하지 못하게 하고,
+-- 검증이 포함된 이 함수 한 곳으로만 투표를 저장합니다.
+create or replace function public.submit_awards_vote(
+  p_voter_name text,
+  p_answers jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_submission_id uuid := gen_random_uuid();
+  v_voter text := trim(coalesce(p_voter_name, ''));
+  v_active_count int;
+  v_answer_count int;
+  v_allow_repeat boolean;
+  v_voting_open boolean;
+begin
+  select voting_open, allow_repeat_nominee
+    into v_voting_open, v_allow_repeat
+  from public.awards_settings
+  where id = 1;
+
+  if coalesce(v_voting_open, false) = false then
+    raise exception 'VOTING_CLOSED';
+  end if;
+
+  if char_length(v_voter) < 1 or char_length(v_voter) > 30 then
+    raise exception 'INVALID_VOTER_NAME';
+  end if;
+
+  if p_answers is null or jsonb_typeof(p_answers) <> 'array' then
+    raise exception 'INVALID_ANSWERS';
+  end if;
+
+  select count(*) into v_active_count
+  from public.awards_questions
+  where is_active = true;
+
+  select count(*) into v_answer_count
+  from jsonb_array_elements(p_answers);
+
+  if v_active_count = 0 or v_answer_count <> v_active_count then
+    raise exception 'ANSWER_COUNT_MISMATCH';
+  end if;
+
+  if exists (
+    select 1
+    from (
+      select (x->>'question_id')::uuid as question_id, count(*) as cnt
+      from jsonb_array_elements(p_answers) x
+      group by (x->>'question_id')::uuid
+    ) s
+    left join public.awards_questions q
+      on q.id = s.question_id and q.is_active = true
+    where s.cnt <> 1 or q.id is null
+  ) then
+    raise exception 'INVALID_QUESTION';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_answers) x
+    where char_length(trim(coalesce(x->>'answer_name',''))) < 1
+       or char_length(trim(coalesce(x->>'answer_name',''))) > 30
+  ) then
+    raise exception 'INVALID_ANSWER_NAME';
+  end if;
+
+  if coalesce(v_allow_repeat, true) = false and exists (
+    select 1
+    from (
+      select lower(regexp_replace(trim(x->>'answer_name'), '[[:space:]]+', '', 'g')) as normalized_name,
+             count(*) as cnt
+      from jsonb_array_elements(p_answers) x
+      group by 1
+      having count(*) > 1
+    ) d
+  ) then
+    raise exception 'REPEAT_NOMINEE_NOT_ALLOWED';
+  end if;
+
+  insert into public.awards_submissions(id, voter_name)
+  values (v_submission_id, v_voter);
+
+  insert into public.awards_answers(submission_id, question_id, answer_name)
+  select
+    v_submission_id,
+    (x->>'question_id')::uuid,
+    trim(x->>'answer_name')
+  from jsonb_array_elements(p_answers) x;
+
+  return v_submission_id;
+exception
+  when unique_violation then
+    raise exception 'DUPLICATE_VOTER';
+end;
+$$;
+
+revoke all on function public.submit_awards_vote(text, jsonb) from public;
+grant execute on function public.submit_awards_vote(text, jsonb) to anon, authenticated;
+
+-- 완료 후 Table Editor에 아래 5개만 새로 생기면 정상입니다.
+-- awards_questions / awards_submissions / awards_answers / awards_admins / awards_settings
