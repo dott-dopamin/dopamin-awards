@@ -21,3 +21,10 @@
 .autocomplete-option{display:block;width:100%;border:0;background:transparent;text-align:left;padding:11px 12px;border-radius:10px;color:var(--text);font-weight:700}
 .autocomplete-option:hover,.autocomplete-option:focus{background:var(--accent-soft);color:var(--accent);outline:none}
 .autocomplete-empty{padding:11px 12px;color:var(--muted);font-size:13px}
+
+/* 자동완성 메뉴가 다음 카드 뒤로 숨지 않도록 포커스된 카드를 위로 올림 */
+.questions,.question-card,.voter-card{overflow:visible}
+.question-card,.voter-card{position:relative;z-index:1}
+.question-card:focus-within,.voter-card:focus-within{z-index:120}
+.autocomplete-wrap{position:relative;z-index:2}
+.autocomplete-menu{z-index:200}
